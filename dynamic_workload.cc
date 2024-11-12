@@ -1,6 +1,8 @@
 #include "dynamic_workload.h"
 #define GPU_UTIL_FILE "/mnt/ramdisk/gpu_util"
 
+#define GPU_KERNEL_SIZE 15
+
 const char* computeShaderSource = R"(
 #version 310 es
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in; // Work group size
@@ -57,65 +59,42 @@ void INThandler(int sig) {
 
 Workload::Workload(){};
 
-Workload::Workload(int init_wait_time) {
+Workload::Workload(int init_wait_time_, 
+                   int total_duration_, 
+                   std::string offset_file_name_,
+                   std::string param_file_name_) {
   struct timespec init, begin, end, begin_i, end_i;
-  
+  offset_file_name = offset_file_name_;
   /* Total execution occurs in duration x size (sec)*/
-
+  if(ReadOffsets(offset_file_name) != 1){
+    std::cout << "Offset file read error" << "\n";
+    return;
+  }
+  if(ReadParams(param_file_name_) != 1){
+    std::cout << "Offset file read error" << "\n";
+    return;
+  }
   int size = 1;
-  total_duration = duration;
-  cpugpu_transition = transition_time;
-  gpu_kernel_size = kernel_size;
-  cpu_cores = cpu;
+  total_duration = total_duration_;
+  init_wait_time = init_wait_time_;
+  cpugpu_transition = 0;
+  gpu_kernel_size = GPU_KERNEL_SIZE;
+  cpu_cores = get_nprocs();
 
-  std::cout << "Dummy workload" << "\n";
+  std::cout << "Dynamic dummy workload" << "\n";
   std::cout << "Total duration: " << total_duration << "s \n";
-  std::cout << "CPU GPU transition: " << cpugpu_transition << "s \n";
-  std::cout << "GPU z2 kernel size: " << gpu_kernel_size << "\n";
-  std::cout << "CPU max cores: " << cpu_cores << "\n";
-
-  // int core[11] = {0, 1, 2, 3, 4, 5, 6};
-  // int util[11] = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
-
-  // std::random_device rd;
-  // std::mt19937 gen(rd()); // 매 번 정규분포로 뽑아주는 값이 다름 (비교 가능할까?)
-  std::mt19937 generator_c; // 매 번 정규분포로 뽑아주는 값이 동일함 (random하다고 볼 수 있을까?)
-  std::mt19937 generator_g; // 매 번 정규분포로 뽑아주는 값이 동일함 (random하다고 볼 수 있을까?)
-  std::normal_distribution<double> dist_c(/* 평균 = */ 90, /* 표준 편차 = */ 3);
-  std::normal_distribution<double> dist_g(/* 평균 = */ 90, /* 표준 편차 = */ 3);
-  std::vector<int> hist_c(size);
-  std::vector<int> hist_g(size);
-  //std::map<int, int> hist_v{};
-
-  for (int n = 0; n < size; ++n) {
-    // generator or gen 넣어줘야함
-    hist_c[n] = std::round(dist_c(generator_c));
-    hist_g[n] = std::round(dist_g(generator_g));
-    //++hist_v[hist[n]]; // dist(generator)로 생성한 값(key)의 value를 늘려줌
-  }
-#ifdef hist
-  for (auto p : hist_v) {
-    std::cout << std::setw(2) << p.first << ' '
-              << std::string(p.second, '*') << " " << p.second << '\n';
-  }
-#endif
-  for (auto p : hist_c) {
-    std::cout << p << ' ';
-  }
-  std::cout << "\n";
-  for (auto p : hist_g) {
-    std::cout << p << ' ';
-  }
-  std::cout << "\n";
+  std::cout << "Inital wait time: " << init_wait_time << "s \n";
+  std::cout << "GPU kernel size: " << gpu_kernel_size << "\n";
+  std::cout << "Number of CPU coers: " << cpu_cores << "\n" 
 
   clock_gettime(CLOCK_MONOTONIC, &init);
-  std::ofstream gpu_util_f, cpu_util_f;
   std::cout << "========Init=========\n";
   ///////////////////////////////////////////////////////////////////////
   ////// workload start 
   double elapsed_t = 0;
-  double total_elepsed_t = 0;
-
+  double total_elapsed_t = 0;
+  double interval_elapsed_t = 0;
+  double single_interval = 0;
   cpu_workload_pool.reserve(cpu_cores);
   stop = false;
   cpu_worker_termination = false;
@@ -131,8 +110,18 @@ Workload::Workload(int init_wait_time) {
             << "\n";
   gpu_workload_pool.emplace_back([this]() { this->GPU_Worker(); });
   
+  // Wait for inital waiting time.
+  std::this_thread::sleep_for(std::chrono::seconds(init_wait_time));
+
   clock_gettime(CLOCK_MONOTONIC, &init);
-  while (total_elepsed_t < total_duration) {
+  while(total_elapsed_t < total_duration){
+    while(interval_elapsed_t < single_interval){
+      // start CPU worker
+      // start GPU worker
+    }
+  }
+
+  while (total_elapsed_t < total_duration) {
     ////////////////////////
     // CPU start (300ms)  //
     ////////////////////////
@@ -152,7 +141,7 @@ Workload::Workload(int init_wait_time) {
       elapsed_t = (end.tv_sec - begin.tv_sec) +
                   ((end.tv_nsec - begin.tv_nsec) / 1000000000.0);
     }
-    total_elepsed_t += elapsed_t;
+    total_elapsed_t += elapsed_t;
     // printf("CPU elapsed %.6fs\n", elapsed_t);
     std::cout << "CPU workload done" << "\n";
         cpu_stop = true;
@@ -185,11 +174,11 @@ Workload::Workload(int init_wait_time) {
 
     // Minsung
     gpu_stop = true;
-    total_elepsed_t += elapsed_t;
+    total_elapsed_t += elapsed_t;
 
     // printf("GPU elapsed %.6fs\n", elapsed_t);
     std::cout << "GPU workload done" << "\n";
-    printf("total eplepsed t : %f \n", total_elepsed_t);
+    printf("total eplepsed t : %f \n", total_elapsed_t);
   }
 
   // CPU worker kill
@@ -219,6 +208,50 @@ Workload::Workload(int init_wait_time) {
   gpu_workload_pool.clear();
   std::cout << "=====================\n";
 };
+
+int Workload::ReadOffsets(std::string& offset_file_name){
+  std::ifstream inFile(offset_file_name);
+  if (!inFile) {
+      std::cerr << "Cannot open offset file." << std::endl;
+      return -1;
+  }
+
+  std::vector<std::pair<int, int>> data;
+  int num1, num2;
+  while (inFile >> num1 >> num2) {
+      offsets.emplace_back(num1, num2); // pair를 벡터에 추가
+  }
+  inFile.close();
+  return 1;
+}
+
+int Workload::ReadParams(std::string& param_file_name){
+  std::ifstream inFile("params");
+  if (!inFile) {
+      std::cerr << "파일을 열 수 없습니다." << std::endl;
+      return 0;
+  }
+
+  double interval;
+  int gpu_cycle, cpu_cycle;
+
+  // 파일에서 데이터를 읽어 구조체에 저장
+  while (inFile >> interval >> gpu_cycle >> cpu_cycle) {
+    TestParam param{interval, gpu_cycle, cpu_cycle}; // 구조체 초기화
+    test_params.push_back(param); // 벡터에 구조체 추가
+  }
+
+  inFile.close();
+
+  // 데이터 확인 출력
+  for (const auto& param : test_params) {
+    std::cout << "Interval: " << param.interval
+              << ", GPU Cycle: " << param.gpu_cycle
+              << ", CPU Cycle: " << param.cpu_cycle << std::endl;
+  }
+
+  return 1;
+}
 
 void Workload::CPU_Worker() {
   // not implemented

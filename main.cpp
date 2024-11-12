@@ -2,25 +2,15 @@
 
 int main(int argv, char* argc[]){
   if(argv < 4){
-    std::cout << "Not enough args, usage : duration(0~), transition time(), kernel size() " <<
-                 "num_cpu(0~)" << "\n";
+    std::cout << "Not enough args, usage : duration(0~), initial wait time(),\
+                 offset file path, parameter file path" << "\n";
     exit(-1);
   }
-  int cpu, gpu, duration;
-  float transition_time;
-  int kernel_size;
-
-  duration = atoi(argc[1]);
-  transition_time = stof(std::string(argc[2]));
-  kernel_size = atoi(argc[3]);
-  cpu = atoi(argc[4]);
-  // gpu = atoi(argc[3]);
-  
-  
-  
+  int duration = atoi(argc[1]);
+  int wait_time = atoi(argc[2]);
 
   // Workload workload(duration, cpu, gpu, false);
-  Workload workload(duration, transition_time, kernel_size, cpu, false);
+  Workload workload(duration, wait_time, std::string(argc[3]), std::string(argc[4]));
 
   return 0;
 }

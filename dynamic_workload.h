@@ -10,24 +10,38 @@
 #include <thread>
 #include <vector>
 #include <fstream>
+#include <iostream>
 #include <cstdlib>
 #include <signal.h>
 #include <random>
 #include <map>
+#include <thread>
 #include <yaml-cpp/yaml.h> // for yaml parameter.
+#include <sys/sysinfo.h>
+
+typedef struct TestParam{
+  double interval;
+  int gpu_cycle;
+  int cpu_cycle;
+}TestParam;
 
 class Workload {
  public:
   Workload();
   // Workload(int duration, int cpu, int gpu, bool random);
-  Workload(int init_wait_time);
+  Workload(int init_wait_time,
+           int total_duration, 
+           std::string offset_file_name,
+           std::string param_file_name);
 
   ~Workload();
 
   void GPU_Worker();
   void CPU_Worker();
 
-  int total_duration;
+  int ReadOffsets(std::string& offset_file_name);
+  int ReadParams(std::string& param_file_name);
+
   float cpugpu_transition;
   int gpu_kernel_size;
   int cpu_cores;
@@ -55,6 +69,15 @@ class Workload {
 
 
  private:
+  int total_duration;
+  int init_wait_time;
+
+  std::vector<TestParam> test_params;
+  
+  std::vector<std::pair<int, int>> offsets;
+  std::string offset_file_name;
+  std::string param_file_name;
+
   // GPU workload pool
   std::vector<std::thread> gpu_workload_pool;
 
