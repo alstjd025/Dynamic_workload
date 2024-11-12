@@ -1,0 +1,66 @@
+# Note
+#
+# - sequence: 0
+#   params:
+#     - interval: 10
+#       cpu_duty_cycle: 0
+#       gpu_duty_cycle: 0
+#       offset: 0
+#       duration: 60
+ 
+- sequence: 0
+  params:
+    - interval: 10
+      cpu_duty_cycle: 0
+      gpu_duty_cycle: 0
+      offset_seed: 0
+      duration: 60
+- sequence: 0
+  params:
+    - interval: 10
+      cpu_duty_cycle: 0
+      gpu_duty_cycle: 0
+      offset: 0
+      duration: 60
+- sequence: 0
+  params: 
+    - interval: 10
+      cpu_duty_cycle: 0
+      gpu_duty_cycle: 0
+      offset: 0
+      duration: 60
+- sequence: 0
+  params:
+    - interval: 10
+      cpu_duty_cycle: 0
+      gpu_duty_cycle: 0
+      offset: 0
+      duration: 60
+- sequence: 0
+  params:
+    - interval: 10
+      cpu_duty_cycle: 0
+      gpu_duty_cycle: 0
+      offset: 0
+      duration: 60
+- sequence: 0
+  params:
+    - interval: 10
+      cpu_duty_cycle: 0
+      gpu_duty_cycle: 0
+      offset: 0
+      duration: 60
+- sequence: 0
+  params:
+    - interval: 10
+      cpu_duty_cycle: 0
+      gpu_duty_cycle: 0
+      offset: 0
+      duration: 60
+- sequence: 0
+  params:
+    - interval: 10
+      cpu_duty_cycle: 0
+      gpu_duty_cycle: 0
+      offset: 0
+      duration: 60
