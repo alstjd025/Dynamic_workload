@@ -59,8 +59,8 @@ void INThandler(int sig) {
 
 Workload::Workload(){};
 
-Workload::Workload(int init_wait_time_, 
-                   int total_duration_, 
+Workload::Workload(int total_duration_, 
+                   int init_wait_time_, 
                    std::string offset_file_name_,
                    std::string param_file_name_) {
   struct timespec init, begin, end, begin_i, end_i;
@@ -71,7 +71,7 @@ Workload::Workload(int init_wait_time_,
     return;
   }
   if(ReadParams(param_file_name_) != 1){
-    std::cout << "Offset file read error" << "\n";
+    std::cout << "Param file read error" << "\n";
     return;
   }
   int size = 1;
@@ -85,7 +85,7 @@ Workload::Workload(int init_wait_time_,
   std::cout << "Total duration: " << total_duration << "s \n";
   std::cout << "Inital wait time: " << init_wait_time << "s \n";
   std::cout << "GPU kernel size: " << gpu_kernel_size << "\n";
-  std::cout << "Number of CPU coers: " << cpu_cores << "\n" 
+  std::cout << "Number of CPU coers: " << cpu_cores << "\n" ;
 
   clock_gettime(CLOCK_MONOTONIC, &init);
   std::cout << "========Init=========\n";
@@ -106,7 +106,7 @@ Workload::Workload(int init_wait_time_,
   }
   //Minsung
   gpu_workload_pool.reserve(1);
-  std::cout << "Creates kernel size " << gpu_kernel_size << " workload GPU worker"
+  std::cout << "Creates kernel size " << gpu_kernel_size << " GPU worker"
             << "\n";
   gpu_workload_pool.emplace_back([this]() { this->GPU_Worker(); });
   
@@ -209,6 +209,19 @@ Workload::Workload(int init_wait_time_,
   std::cout << "=====================\n";
 };
 
+void Workload::CPUWorkload(){
+  while(!cpu_workload_terminate){
+    // calculate offset
+    // workload for single interval
+  }
+}
+
+void Workload::GPUWorkload(){
+  while(!gpu_workload_terminate){
+
+  }
+}
+
 int Workload::ReadOffsets(std::string& offset_file_name){
   std::ifstream inFile(offset_file_name);
   if (!inFile) {
@@ -226,7 +239,7 @@ int Workload::ReadOffsets(std::string& offset_file_name){
 }
 
 int Workload::ReadParams(std::string& param_file_name){
-  std::ifstream inFile("params");
+  std::ifstream inFile(param_file_name);
   if (!inFile) {
       std::cerr << "파일을 열 수 없습니다." << std::endl;
       return 0;

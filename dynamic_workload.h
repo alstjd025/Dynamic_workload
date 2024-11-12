@@ -16,7 +16,6 @@
 #include <random>
 #include <map>
 #include <thread>
-#include <yaml-cpp/yaml.h> // for yaml parameter.
 #include <sys/sysinfo.h>
 
 typedef struct TestParam{
@@ -39,8 +38,13 @@ class Workload {
   void GPU_Worker();
   void CPU_Worker();
 
+  void CPUWorkload();
+  void GPUWorkload();
+
   int ReadOffsets(std::string& offset_file_name);
   int ReadParams(std::string& param_file_name);
+
+ private:
 
   float cpugpu_transition;
   int gpu_kernel_size;
@@ -52,6 +56,13 @@ class Workload {
   bool gpu_ignition = false;
   bool gpu_kernel_done = false;
   bool terminate = false;
+
+  bool cpu_workload_terminate = false;
+  bool gpu_workload_terminate = false;
+
+  std::thread cpu_workload;
+  std::thread gpu_workload;
+
   std::mutex mtx;
   std::mutex cpu_mtx;
   std::mutex gpu_mtx;
@@ -66,9 +77,6 @@ class Workload {
   std::atomic_bool gpu_stop;
   std::atomic_bool cpu_worker_termination;
   std::atomic_bool gpu_worker_termination;
-
-
- private:
   int total_duration;
   int init_wait_time;
 

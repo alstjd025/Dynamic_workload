@@ -2,8 +2,8 @@
 
 int main(int argv, char* argc[]){
   if(argv < 4){
-    std::cout << "Not enough args, usage : duration(0~), initial wait time(),\
-                 offset file path, parameter file path" << "\n";
+    std::cout << "Not enough args, usage : duration(sec), initial wait time(sec)" <<
+                 " offset file path, parameter file path" << "\n";
     exit(-1);
   }
   int duration = atoi(argc[1]);
