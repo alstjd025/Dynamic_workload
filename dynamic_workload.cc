@@ -59,13 +59,13 @@ void INThandler(int sig) {
 
 Workload::Workload(){};
 
-Workload::Workload(int total_duration_, 
+Workload::Workload(int single_test_duration_,
                    int init_wait_time_, 
                    std::string offset_file_name_,
                    std::string param_file_name_) {
   struct timespec init, begin, end, begin_i, end_i;
-  offset_file_name = offset_file_name_;
   /* Total execution occurs in duration x size (sec)*/
+  offset_file_name = offset_file_name_;
   if(ReadOffsets(offset_file_name) != 1){
     std::cout << "Offset file read error" << "\n";
     return;
@@ -75,26 +75,35 @@ Workload::Workload(int total_duration_,
     return;
   }
   int size = 1;
-  total_duration = total_duration_;
+
+  // no need
+
+  single_test_duration = single_test_duration_;
   init_wait_time = init_wait_time_;
   cpugpu_transition = 0;
   gpu_kernel_size = GPU_KERNEL_SIZE;
   cpu_cores = get_nprocs();
 
   std::cout << "Dynamic dummy workload" << "\n";
-  std::cout << "Total duration: " << total_duration << "s \n";
+  std::cout << "Single test duration: " << single_test_duration << "\n";
   std::cout << "Inital wait time: " << init_wait_time << "s \n";
   std::cout << "GPU kernel size: " << gpu_kernel_size << "\n";
   std::cout << "Number of CPU coers: " << cpu_cores << "\n" ;
+  std::cout << "Number of total test sequences: " << test_params.size() << "\n";
 
-  clock_gettime(CLOCK_MONOTONIC, &init);
-  std::cout << "========Init=========\n";
+  std::cout << C_GREN << "========Workload Init=========\n" << C_NRML;
   ///////////////////////////////////////////////////////////////////////
-  ////// workload start 
+  ////// workload start
+  cpu_inner_test_sequence_count = 0;
+  gpu_inner_test_sequence_count = 0; 
+  global_inner_test_sequence = 0;
+  global_test_sequence_count = 0;
+
   double elapsed_t = 0;
   double total_elapsed_t = 0;
   double interval_elapsed_t = 0;
   double single_interval = 0;
+  int maximum_test = 0;
   cpu_workload_pool.reserve(cpu_cores);
   stop = false;
   cpu_worker_termination = false;
@@ -112,74 +121,41 @@ Workload::Workload(int total_duration_,
   
   // Wait for inital waiting time.
   std::this_thread::sleep_for(std::chrono::seconds(init_wait_time));
-
+  std::cout << C_GREN << "========Workload start=========\n" << C_NRML;
   clock_gettime(CLOCK_MONOTONIC, &init);
-  while(total_elapsed_t < total_duration){
-    while(interval_elapsed_t < single_interval){
+  while(global_test_sequence_count < test_params.size()){
+    maximum_test = single_test_duration / test_params[global_test_sequence_count].interval;
+    if(maximum_test > offsets.size()){
+      std::cout << C_RED << "Dynamic workload: maximum test sequence exceeds offset params"
+                         <<  " begin ====\n" <<C_NRML;
+    }
+    while(global_inner_test_sequence < maximum_test){
+      std::cout << C_GREN << "==== Workload sequence: " << global_inner_test_sequence + 1 
+                <<  "/"<< maximum_test << " begin ====\n" <<C_NRML;
+      // CPU and GPU worklaod should work in single interval.
       // start CPU worker
+      cpu_workload = std::thread(&Workload::CPUWorkload, this);  
       // start GPU worker
+      gpu_workload = std::thread(&Workload::GPUWorkload, this);  
+      
+      cpu_workload.join();
+      gpu_workload.join();
+      std::cout << C_GREN << "==== Workload sequence: " << global_inner_test_sequence + 1
+                <<  "/" << maximum_test << " end ====\n" <<C_NRML;
+      cpu_inner_test_sequence_count += 1;
+      gpu_inner_test_sequence_count += 1;
+      global_inner_test_sequence += 1;
     }
+    cpu_inner_test_sequence_count = 0;
+    gpu_inner_test_sequence_count = 0; 
+    global_inner_test_sequence = 0;
+    global_test_sequence_count += 1;
+    // Calaculate timing???
   }
-
-  while (total_elapsed_t < total_duration) {
-    ////////////////////////
-    // CPU start (300ms)  //
-    ////////////////////////
-    cpu_stop = false;
-    {  // wakes  workers
-      std::unique_lock<std::mutex> lock(cpu_mtx);
-      cpu_ignition = true;
-      cpu_cv.notify_all();
-      std::cout << "Notified CPU workers"
-                << "\n";
-    }
-    clock_gettime(CLOCK_MONOTONIC, &begin);
-    elapsed_t = 0;
-    while (elapsed_t < cpugpu_transition) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      clock_gettime(CLOCK_MONOTONIC, &end);
-      elapsed_t = (end.tv_sec - begin.tv_sec) +
-                  ((end.tv_nsec - begin.tv_nsec) / 1000000000.0);
-    }
-    total_elapsed_t += elapsed_t;
-    // printf("CPU elapsed %.6fs\n", elapsed_t);
-    std::cout << "CPU workload done" << "\n";
-        cpu_stop = true;
-        cpu_ignition = false;
-
-    ////////////////////////
-    // GPU start (300ms)  //
-    ////////////////////////
-    //Minsung
-    gpu_stop = false;
-    {  // wakes  workers
-      std::unique_lock<std::mutex> lock(gpu_mtx);
-      gpu_ignition = true;
-      gpu_kernel_done = false;
-      gpu_cv.notify_all();
-      // std::cout << "Notified GPU workers"
-      //           << "\n";
-    }
-    
-    clock_gettime(CLOCK_MONOTONIC, &begin);
-    elapsed_t = 0;
-    { // GPU kernel return wait
-      std::unique_lock<std::mutex> lock_data(gpu_mtx);
-      gpu_end_cv.wait(lock_data, [&] { return gpu_kernel_done; });
-    }
+  clock_gettime(CLOCK_MONOTONIC, &end);
   
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    elapsed_t = (end.tv_sec - begin.tv_sec) +
-                ((end.tv_nsec - begin.tv_nsec) / 1000000000.0);
-
-    // Minsung
-    gpu_stop = true;
-    total_elapsed_t += elapsed_t;
-
-    // printf("GPU elapsed %.6fs\n", elapsed_t);
-    std::cout << "GPU workload done" << "\n";
-    printf("total eplepsed t : %f \n", total_elapsed_t);
-  }
+  ////// workload end
+  ///////////////////////////////////////////////////////////////////////
 
   // CPU worker kill
   cpu_worker_termination = true;
@@ -206,20 +182,134 @@ Workload::Workload(int total_duration_,
   for (auto& workers : cpu_workload_pool) workers.join();
   cpu_workload_pool.clear();
   gpu_workload_pool.clear();
-  std::cout << "=====================\n";
+  std::cout << "====== Workload done ======\n";
 };
 
 void Workload::CPUWorkload(){
-  while(!cpu_workload_terminate){
-    // calculate offset
-    // workload for single interval
+  struct timespec begin, end;
+  float elapsed_t_millisec;
+
+  // calculate offset and duty cycle
+  float offset = CalculateOffsetandDutyCycle(1);  // 1 means CPU
+  // cpu_workload_duty_cycle is calculated from CalculateOffsetandDutyCycle().
+  float cpu_duty_cycle = cpu_workload_duty_cycle;
+  float interval = workload_interval;
+  // workload for single interval
+
+  // we calculate every timing in sec. so change sec to millisec here.
+  offset *= 1000.0; // change offset to millisec (ex, 0.7 sec -> 700ms)
+  cpu_duty_cycle *= 1000.0; // change duty cycle to millisec (ex, 0.5 sec -> 500ms)
+  interval *= 1000.0; // change interval cycle to millisec (ex, 1 sec -> 1000ms)
+  
+  // wait for offset time.
+  clock_gettime(CLOCK_MONOTONIC, &begin);
+  std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(offset)));
+  printf("%s CPU duty cycle start, works for %0.1fms %s \n", C_GREN, cpu_duty_cycle, C_NRML);
+  cpu_stop = false;
+  {  // wakes  workers
+    std::unique_lock<std::mutex> lock(cpu_mtx);
+    cpu_ignition = true;
+    cpu_cv.notify_all();
   }
+  elapsed_t_millisec = 0;
+  // do work for duty cycle
+  std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(cpu_duty_cycle)));
+  cpu_stop = true;
+  cpu_ignition = false;
+  printf("%s CPU duty cycle end %s \n", C_GREN, C_NRML);
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  elapsed_t_millisec = (end.tv_sec - begin.tv_sec) +
+              ((end.tv_nsec - begin.tv_nsec) / 1000000.0);
+  // printf("CPU elapsed %.6fs\n", elapsed_t);
+  // stop work 
+  float eta = interval - elapsed_t_millisec;
+  if(eta > 0){
+    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(eta)));
+  }
+  std::cout << "CPU workload done" << "\n";
 }
 
 void Workload::GPUWorkload(){
-  while(!gpu_workload_terminate){
+  struct timespec begin, end;
+  double elapsed_t_millisec;
 
+  // calculate offset and duty cycle.
+  float offset = CalculateOffsetandDutyCycle(2);  // 2 means GPU
+  // cpu_workload_duty_cycle is calculated from CalculateOffsetandDutyCycle().
+  float gpu_duty_cycle = gpu_workload_duty_cycle;
+  float interval = workload_interval;
+
+  // we calculate every timing in sec. so change sec to millisec here.
+  offset *= 1000.0; // change offset to millisec (ex, 0.7 sec -> 700ms)
+  gpu_duty_cycle *= 1000.0; // change duty cycle to millisec (ex, 0.5 sec -> 500ms)
+  interval *= 1000.0; // change interval cycle to millisec (ex, 1 sec -> 1000ms)
+  
+  // wait for offset time.
+  clock_gettime(CLOCK_MONOTONIC, &begin);
+  std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(offset)));
+  printf("%s GPU duty cycle start, works for %0.1fms %s \n", C_GREN, gpu_duty_cycle, C_NRML);
+  gpu_stop = false;
+  {  // wakes  workers
+    std::unique_lock<std::mutex> lock(gpu_mtx);
+    gpu_ignition = true;
+    gpu_kernel_done = false;
+    gpu_cv.notify_all();
   }
+  clock_gettime(CLOCK_MONOTONIC, &begin);
+  elapsed_t_millisec = 0;
+  { // GPU kernel return wait
+    std::unique_lock<std::mutex> lock_data(gpu_mtx);
+    gpu_end_cv.wait(lock_data, [&] { return gpu_kernel_done; });
+  }
+  printf("%s GPU duty cycle end %s \n", C_GREN, C_NRML);
+  gpu_stop = true;
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  elapsed_t_millisec = (end.tv_sec - begin.tv_sec) +
+              ((end.tv_nsec - begin.tv_nsec) / 1000000.0);
+
+  float eta = interval - elapsed_t_millisec;
+  if(eta > 0){
+    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(eta)));
+  }
+}
+
+float Workload::CalculateOffsetandDutyCycle(int resource){
+  float interval = 0;
+  float duty_cycle = 0;
+  float offset = 0;
+  int offset_percentage = 0;
+  int inner_test_sequence = 0;
+  int test_sequence = global_test_sequence_count;
+  if(test_params.empty() || offsets.empty()){
+    std::cout  << C_RED << "DynamicWorkload: offset calculation failed,"
+               << "empty test params or offset params." 
+               << C_NRML << "\n";
+    return -1;
+  }
+  if(test_params.size() == 1 && test_sequence > 0 ){
+    test_sequence = 0;
+  }
+  interval = test_params[test_sequence].interval;
+  workload_interval = interval;
+  if(resource == 1){ // 1 means CPU
+    inner_test_sequence = cpu_inner_test_sequence_count;
+    offset_percentage = offsets[inner_test_sequence].first;
+    duty_cycle = test_params[test_sequence].cpu_cycle / 100.0;
+    cpu_workload_duty_cycle = interval * cpu_workload_duty_cycle;
+    offset = (((interval - cpu_workload_duty_cycle) / 100.0) * offset_percentage);
+  }else if(resource == 2){ // 2 means GPU
+    inner_test_sequence = gpu_inner_test_sequence_count;
+    offset_percentage = offsets[inner_test_sequence].second;
+    duty_cycle = test_params[test_sequence].cpu_cycle / 100.0;
+    gpu_workload_duty_cycle = interval * gpu_workload_duty_cycle;
+    offset = (((interval - gpu_workload_duty_cycle) / 100.0) * offset_percentage);
+  }else{
+    std::cout  << C_RED << "DynamicWorkload:"
+               << " offset calculation failed, wrong resource." 
+               << C_NRML << "\n";
+  }
+  // calculate offset.
+  return offset;
 }
 
 int Workload::ReadOffsets(std::string& offset_file_name){
@@ -257,11 +347,11 @@ int Workload::ReadParams(std::string& param_file_name){
   inFile.close();
 
   // 데이터 확인 출력
-  for (const auto& param : test_params) {
-    std::cout << "Interval: " << param.interval
-              << ", GPU Cycle: " << param.gpu_cycle
-              << ", CPU Cycle: " << param.cpu_cycle << std::endl;
-  }
+  // for (const auto& param : test_params) {
+  //   std::cout << "Interval: " << param.interval
+  //             << ", GPU Cycle: " << param.gpu_cycle
+  //             << ", CPU Cycle: " << param.cpu_cycle << std::endl;
+  // }
 
   return 1;
 }
@@ -437,11 +527,11 @@ void Workload::GPU_Worker() {
       glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
       glFinish();  // all commmand push to GPU HW queue (gpu has two queue, gpu
                   // drvier queue + gpu hw queue )
-      printf("gpu kernel latency : %.11f\n", response_t);
+      // printf("gpu kernel latency : %.11f\n", response_t);
       clock_gettime(CLOCK_MONOTONIC, &end);
       gpu_elapsed_t = (end.tv_sec - seq_begin.tv_sec) +
                   ((end.tv_nsec - seq_begin.tv_nsec) / 1000000000.0);
-      if (gpu_elapsed_t > cpugpu_transition) {
+      if (gpu_elapsed_t > gpu_workload_duty_cycle) {
         gpu_stop = true;
       }
     }

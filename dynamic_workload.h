@@ -18,6 +18,15 @@
 #include <thread>
 #include <sys/sysinfo.h>
 
+#define C_NRML "\033[0m" 
+#define C_BLCK "\033[30m"
+#define C_RED  "\033[31m"
+#define C_GREN "\033[32m"
+#define C_YLLW "\033[33m"
+#define C_BLUE "\033[34m"
+#define C_PRPL "\033[35m"
+#define C_AQUA "\033[36m"
+
 typedef struct TestParam{
   double interval;
   int gpu_cycle;
@@ -28,8 +37,8 @@ class Workload {
  public:
   Workload();
   // Workload(int duration, int cpu, int gpu, bool random);
-  Workload(int init_wait_time,
-           int total_duration, 
+  Workload(int single_test_duration,
+           int init_wait_time,
            std::string offset_file_name,
            std::string param_file_name);
 
@@ -43,6 +52,8 @@ class Workload {
 
   int ReadOffsets(std::string& offset_file_name);
   int ReadParams(std::string& param_file_name);
+
+  float CalculateOffsetandDutyCycle(int resource);
 
  private:
 
@@ -63,6 +74,15 @@ class Workload {
   std::thread cpu_workload;
   std::thread gpu_workload;
 
+  std::atomic<int> cpu_inner_test_sequence_count;
+  std::atomic<int> gpu_inner_test_sequence_count;
+  std::atomic<int> global_test_sequence_count;
+  std::atomic<int> global_inner_test_sequence;
+
+  std::atomic<float> cpu_workload_duty_cycle;
+  std::atomic<float> gpu_workload_duty_cycle;
+  std::atomic<float> workload_interval;
+
   std::mutex mtx;
   std::mutex cpu_mtx;
   std::mutex gpu_mtx;
@@ -77,7 +97,7 @@ class Workload {
   std::atomic_bool gpu_stop;
   std::atomic_bool cpu_worker_termination;
   std::atomic_bool gpu_worker_termination;
-  int total_duration;
+  int single_test_duration;
   int init_wait_time;
 
   std::vector<TestParam> test_params;
