@@ -1,6 +1,6 @@
 #include <EGL/egl.h>
 #include <GLES3/gl31.h>
-
+#include <CL/cl.hpp>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>

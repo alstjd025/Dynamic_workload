@@ -1,6 +1,6 @@
 CC := g++
-CFLAGS := -std=c++11 -I/usr/include 
-LDFLAGS := -lpthread -lEGL -lGLESv2 
+CFLAGS := -std=c++11 -Wall -I/usr/include 
+LDFLAGS := -lpthread -lEGL -lGLESv2 -lOpenCL -L/usr/lib 
 
 SRCS := dynamic_workload.cpp main.cpp 
 GL_SRCS := gl_test.cpp
