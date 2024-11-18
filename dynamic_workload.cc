@@ -2,7 +2,7 @@
 #define GPU_UTIL_FILE "/mnt/ramdisk/gpu_util"
 
 
-#define GPU_KERNEL_SIZE 1024
+#define GPU_KERNEL_SIZE 15
 #define GPU_WORKER_NUM 15
 
 const char* computeShaderSource = R"(
@@ -142,6 +142,10 @@ Workload::Workload(std::string param_file_name_) {
     gpu_workload_duty_cycle = gpu_duty / window_count;
     std::cout << "CPU util " << cur_cpu_util << 
                 " GPU util " << gpu_workload_duty_cycle << "\n";
+    if(cur_cpu_util > 2){
+	cur_cpu_util--;
+	cur_cpu_util--;
+    }
     cpu_workload_pool.reserve(cur_cpu_util+1);
     cpu_worker_termination = false;
     cpu_stop = false;
@@ -188,7 +192,7 @@ Workload::Workload(std::string param_file_name_) {
     std::cout << C_GREN << "==== Workload sequence: " << global_inner_test_sequence + 1
               <<  "/" << maximum_test << " end " << 
               static_cast<int>(elapsed_t_millisec) << "ms ===\n" <<C_NRML;
-    if(elapsed_t_millisec > 20000){
+    if(elapsed_t_millisec > 30000){
       do_load = false;
     }
   }
