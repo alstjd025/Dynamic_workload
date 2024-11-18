@@ -172,6 +172,8 @@ Workload::Workload(std::string param_file_name_) {
     int cur_cpu_util = CPUload[global_inner_test_sequence] / 100;
     std::cout << "cur util " << cur_cpu_util << "\n";
     cpu_workload_pool.reserve(cur_cpu_util+1);
+    cpu_worker_termination = false;
+    cpu_stop = false;
     for (int i = 0; i < cur_cpu_util; ++i) {
       std::cout << "Creates " << i+1 << " cpu worker"
                 << "\n";
@@ -189,15 +191,15 @@ Workload::Workload(std::string param_file_name_) {
     cpu_stop = true;
     cpu_ignition = false;
     cpu_worker_termination = true;
+    std::cout << "clear" << "\n";
     // start GPU worker
     // gpu_workload = std::thread(&Workload::GPUWorkload, this);  
     
 
     for (auto& workers : cpu_workload_pool) workers.join();
     cpu_workload_pool.clear();
-    cpu_worker_termination = false;
-    cpu_ignition = true;
-    // gpu_workload.join();
+    // gpu_workload.join()
+    std::cout << "cpu terminate" << "\n";
     clock_gettime(CLOCK_MONOTONIC, &end);
     elapsed_t_millisec += (end.tv_sec * 1000.0 - init.tv_sec * 1000.0) +
           ((end.tv_nsec - init.tv_nsec) / 1000000.0);
@@ -387,7 +389,7 @@ int Workload::ReadParams(std::string& param_file_name){
 void Workload::CPU_Worker() {
   // not implemented
   while(!cpu_worker_termination){
-    // std::cout << "cpu worker start" << "\n";
+ std::cout << "cpu worker start" << "\n";
     {
       std::unique_lock<std::mutex> lock_(cpu_mtx);
       cpu_cv.wait(lock_, [this]() { return cpu_ignition; });
@@ -397,6 +399,7 @@ void Workload::CPU_Worker() {
     while (!cpu_stop) {
       a *= b;
     }
+    break;
   }
   std::cout << "Terminates CPU worker " << "\n";
 };
