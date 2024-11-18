@@ -96,19 +96,11 @@ void INThandler(int sig) {
   m_break = true;
 }
 
-Workload::Workload(){};
+Workload::Workload(){std::cout << "no" << "\n";};
 
-Workload::Workload(int single_test_duration_,
-                   int init_wait_time_, 
-                   std::string offset_file_name_,
-                   std::string param_file_name_) {
+Workload::Workload(std::string param_file_name_) {
   struct timespec init, begin, end, begin_i, end_i;
-  /* Total execution occurs in duration x size (sec)*/
-  offset_file_name = offset_file_name_;
-  if(ReadOffsets(offset_file_name) != 1){
-    std::cout << "Offset file read error" << "\n";
-    return;
-  }
+  std::cout << "ddd" << "\n";
   if(ReadParams(param_file_name_) != 1){
     std::cout << "Param file read error" << "\n";
     return;
@@ -116,25 +108,22 @@ Workload::Workload(int single_test_duration_,
   int size = 1;
 
   // no need
-
-  single_test_duration = single_test_duration_;
-  init_wait_time = init_wait_time_;
   cpugpu_transition = 0;
   gpu_kernel_size = GPU_KERNEL_SIZE;
   cpu_cores = get_nprocs();
 
 
-int maxWorkGroupSize;
-glGetIntegerv(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, &maxWorkGroupSize);
-printf("....................Max Work Group Size: %d\n", maxWorkGroupSize);
+// int maxWorkGroupSize;
+// glGetIntegerv(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, &maxWorkGroupSize);
+// printf("....................Max Work Group Size: %d\n", maxWorkGroupSize);
 
 
   std::cout << "Dynamic dummy workload" << "\n";
-  std::cout << "Single test duration: " << single_test_duration << "\n";
-  std::cout << "Inital wait time: " << init_wait_time << "s \n";
-  std::cout << "GPU kernel size: " << gpu_kernel_size << "\n";
-  std::cout << "Number of CPU coers: " << cpu_cores << "\n" ;
-  std::cout << "Number of total test sequences: " << test_params.size() << "\n";
+  // std::cout << "Single test duration: " << single_test_duration << "\n";
+  // std::cout << "Inital wait time: " << init_wait_time << "s \n";
+  // std::cout << "GPU kernel size: " << gpu_kernel_size << "\n";
+  // std::cout << "Number of CPU coers: " << cpu_cores << "\n" ;
+  // std::cout << "Number of total test sequences: " << test_params.size() << "\n";
 
   std::cout << C_GREN << "========Workload Init=========\n" << C_NRML;
   ///////////////////////////////////////////////////////////////////////
@@ -150,69 +139,82 @@ printf("....................Max Work Group Size: %d\n", maxWorkGroupSize);
   double single_interval = 0;
   int maximum_test = 0;
 
-  // EZE 
-  cpu_workload_pool.reserve(cpu_cores);
+  
+  
   stop = false;
   cpu_worker_termination = false;
   gpu_worker_termination = false;
-  for (int i = 0; i < cpu_cores; ++i) {
-    std::cout << "Creates " << i << " cpu worker"
-              << "\n";
-    cpu_workload_pool.emplace_back([this]() { this->CPU_Worker(); });
-  }
-
-
-  //EZE
-  int GPU_cores  = GPU_WORKER_NUM;
-  gpu_workload_pool.reserve(GPU_cores);
-  for (int i = 0; i < GPU_cores; ++i) {
-    std::cout << "Creates " << i << " gpu worker"
-              << "\n";
-    gpu_workload_pool.emplace_back([this]() { this->GPU_Worker(); });
-  }
-  std::cout << "Creates kernel size " << gpu_kernel_size << " GPU worker"
-            << "\n";
+  
+  // int GPU_cores  = GPU_WORKER_NUM;
+  // gpu_workload_pool.reserve(GPU_cores);
+  // for (int i = 0; i < GPU_cores; ++i) {
+  //   std::cout << "Creates " << i << " gpu worker"
+  //             << "\n";
+  //   gpu_workload_pool.emplace_back([this]() { this->GPU_Worker(); });
+  // }
+  // std::cout << "Creates kernel size " << gpu_kernel_size << " GPU worker"
+  //           << "\n";
   
   double elapsed_t_millisec = 0;
   // Wait for inital waiting time.
-  std::this_thread::sleep_for(std::chrono::seconds(init_wait_time));
+  // std::this_thread::sleep_for(std::chrono::seconds(init_wait_time));
   std::cout << C_GREN << "========Workload start=========\n" << C_NRML;
+  maximum_test = timeVec.size() / 30;
+  int cur_time = timeVec[0];
+  int next_time = cur_time + 1;
+  bool do_load = true;
+  while(do_load){
+    clock_gettime(CLOCK_MONOTONIC, &init);
+    std::cout << C_GREN << "==== Workload sequence: " << global_inner_test_sequence + 1 
+              <<  "/"<< maximum_test << " begin ====\n" <<C_NRML;
+    // CPU and GPU worklaod should work in single interval.
+    // start CPU worker
+    int cur_cpu_util = CPUload[global_inner_test_sequence] / 100;
+    std::cout << "cur util " << cur_cpu_util << "\n";
+    cpu_workload_pool.reserve(cur_cpu_util+1);
+    for (int i = 0; i < cur_cpu_util; ++i) {
+      std::cout << "Creates " << i+1 << " cpu worker"
+                << "\n";
+      cpu_workload_pool.emplace_back([this]() { this->CPU_Worker(); });
+    }
+    cpu_stop = false;
+    {  // wakes  workers
+      std::unique_lock<std::mutex> lock(cpu_mtx);
+      cpu_ignition = true;
+      cpu_cv.notify_all();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(1000)));
+    // do work for duty cycle
+    std::cout << "CPU stop" << "\n";
+    cpu_stop = true;
+    cpu_ignition = false;
+    cpu_worker_termination = true;
+    // start GPU worker
+    // gpu_workload = std::thread(&Workload::GPUWorkload, this);  
+    
 
-  while(global_test_sequence_count < test_params.size()){
-    maximum_test = single_test_duration / test_params[global_test_sequence_count].interval;
-    if(maximum_test > offsets.size()){
-      std::cout << C_RED << "Dynamic workload: maximum test sequence exceeds offset params"
-                         <<  " begin ====\n" <<C_NRML;
-    }
-    while(global_inner_test_sequence < maximum_test){
-      clock_gettime(CLOCK_MONOTONIC, &init);
-      std::cout << C_GREN << "==== Workload sequence: " << global_inner_test_sequence + 1 
-                <<  "/"<< maximum_test << " begin ====\n" <<C_NRML;
-      // CPU and GPU worklaod should work in single interval.
-      // start CPU worker
-      cpu_workload = std::thread(&Workload::CPUWorkload, this);  // EZE
-      // start GPU worker
-      gpu_workload = std::thread(&Workload::GPUWorkload, this);  
-      
-      cpu_workload.join();  // EZE
-      gpu_workload.join();
-      clock_gettime(CLOCK_MONOTONIC, &end);
-      elapsed_t_millisec = (end.tv_sec * 1000.0 - init.tv_sec * 1000.0) +
-            ((end.tv_nsec - init.tv_nsec) / 1000000.0);
-      std::cout << C_GREN << "==== Workload sequence: " << global_inner_test_sequence + 1
-                <<  "/" << maximum_test << " end " << 
-                static_cast<int>(elapsed_t_millisec) << "ms ===\n" <<C_NRML;
-      cpu_inner_test_sequence_count += 1;
-      gpu_inner_test_sequence_count += 1;
+    for (auto& workers : cpu_workload_pool) workers.join();
+    cpu_workload_pool.clear();
+    cpu_worker_termination = false;
+    cpu_ignition = true;
+    // gpu_workload.join();
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    elapsed_t_millisec += (end.tv_sec * 1000.0 - init.tv_sec * 1000.0) +
+          ((end.tv_nsec - init.tv_nsec) / 1000000.0);
+    std::cout << C_GREN << "==== Workload sequence: " << global_inner_test_sequence + 1
+              <<  "/" << maximum_test << " end " << 
+              static_cast<int>(elapsed_t_millisec) << "ms ===\n" <<C_NRML;
+    while(cur_time < next_time){
       global_inner_test_sequence += 1;
+      cur_time = timeVec[global_inner_test_sequence];
     }
-    cpu_inner_test_sequence_count = 0;
-    gpu_inner_test_sequence_count = 0; 
-    global_inner_test_sequence = 0;
-    global_test_sequence_count += 1;
-    // Calaculate timing???
+    next_time += 1;
+    if(elapsed_t_millisec > 20000){
+      do_load = false;
+    }
   }
-  
+
+
   ////// workload end
   ///////////////////////////////////////////////////////////////////////
 
@@ -226,21 +228,21 @@ printf("....................Max Work Group Size: %d\n", maxWorkGroupSize);
     std::cout << "Notified all CPU workers to kill"
               << "\n";
   }
-  gpu_worker_termination = true;
-  gpu_stop = true;
-  {  // wakes  workers
-    std::unique_lock<std::mutex> lock(gpu_mtx);
-    gpu_ignition = true;
-    gpu_cv.notify_all();
-    std::cout << "Notified GPU workers to kill"
-              << "\n";
-  }
+  // gpu_worker_termination = true;
+  // gpu_stop = true;
+  // {  // wakes  workers
+  //   std::unique_lock<std::mutex> lock(gpu_mtx);
+  //   gpu_ignition = true;
+  //   gpu_cv.notify_all();
+  //   std::cout << "Notified GPU workers to kill"
+  //             << "\n";
+  // }
   stop = true;
   ignition = false;
-  for (auto& workers : gpu_workload_pool) workers.join();
+  // for (auto& workers : gpu_workload_pool) workers.join();
   for (auto& workers : cpu_workload_pool) workers.join();
   cpu_workload_pool.clear();
-  gpu_workload_pool.clear();
+  // gpu_workload_pool.clear();
   std::cout << "====== Workload done ======\n";
 };
 
@@ -249,21 +251,6 @@ void Workload::CPUWorkload(){
   clock_gettime(CLOCK_MONOTONIC, &begin);
   float elapsed_t_millisec;
 
-  // calculate offset and duty cycle
-  float offset = CalculateOffsetandDutyCycle(1);  // 1 means CPU
-  // cpu_workload_duty_cycle is calculated from CalculateOffsetandDutyCycle().
-  float cpu_duty_cycle = cpu_workload_duty_cycle;
-  float interval = workload_interval;
-  // workload for single interval
-
-  // we calculate every timing in sec. so change sec to millisec here.
-  offset *= 1000.0; // change offset to millisec (ex, 0.7 sec -> 700ms)
-  cpu_duty_cycle *= 1000.0; // change duty cycle to millisec (ex, 0.5 sec -> 500ms)
-  interval *= 1000.0; // change interval cycle to millisec (ex, 1 sec -> 1000ms)
-  std::cout << "CPU offset " << offset << " duty " << cpu_duty_cycle << " interval " << interval << "\n";
-  // wait for offset time.
-  std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(offset)));
-  printf("%s CPU duty cycle start, works for %dms %s \n", C_GREN, static_cast<int>(cpu_duty_cycle), C_NRML);
   cpu_stop = false;
   {  // wakes  workers
     std::unique_lock<std::mutex> lock(cpu_mtx);
@@ -271,20 +258,16 @@ void Workload::CPUWorkload(){
     cpu_cv.notify_all();
   }
   elapsed_t_millisec = 0;
+  std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(1000)));
   // do work for duty cycle
-  std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(cpu_duty_cycle)));
   cpu_stop = true;
   cpu_ignition = false;
-  printf("%s CPU duty cycle end %s \n", C_GREN, C_NRML);
+  printf("%s CPU workload end %s \n", C_GREN, C_NRML);
   clock_gettime(CLOCK_MONOTONIC, &end);
   elapsed_t_millisec = (end.tv_sec * 1000.0 - begin.tv_sec * 1000.0) +
         ((end.tv_nsec - begin.tv_nsec) / 1000000.0);
   // printf("CPU elapsed %.6fs\n", elapsed_t);
   // stop work 
-  float eta = interval - elapsed_t_millisec;
-  if(eta > 0){
-    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(eta)));
-  }
   // std::cout << "CPU workload done" << "\n";
 }
 
@@ -292,21 +275,6 @@ void Workload::GPUWorkload(){
   struct timespec begin, end;
   clock_gettime(CLOCK_MONOTONIC, &begin);
   double elapsed_t_millisec;
-
-  // calculate offset and duty cycle.
-  float offset = CalculateOffsetandDutyCycle(2);  // 2 means GPU
-  // cpu_workload_duty_cycle is calculated from CalculateOffsetandDutyCycle().
-  float gpu_duty_cycle = gpu_workload_duty_cycle;
-  float interval = workload_interval;
-
-  // we calculate every timing in sec. so change sec to millisec here.
-  offset *= 1000.0; // change offset to millisec (ex, 0.7 sec -> 700ms)
-  gpu_duty_cycle *= 1000.0; // change duty cycle to millisec (ex, 0.5 sec -> 500ms)
-  interval *= 1000.0; // change interval cycle to millisec (ex, 1 sec -> 1000ms)
-  std::cout << "GPU offset " << offset << " duty " << gpu_duty_cycle << " interval " << interval << "\n";
-  // wait for offset time.
-  std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(offset)));
-  printf("%s GPU duty cycle start, works for %dms %s \n", C_GREN, static_cast<int>(gpu_duty_cycle), C_NRML);
   gpu_stop = false;
   {  // wakes  workers
     std::unique_lock<std::mutex> lock(gpu_mtx);
@@ -319,16 +287,13 @@ void Workload::GPUWorkload(){
     std::unique_lock<std::mutex> lock_data(gpu_mtx);
     gpu_end_cv.wait(lock_data, [&] { return gpu_kernel_done; });
   }
+  std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(1000)));
   gpu_stop = true;
   clock_gettime(CLOCK_MONOTONIC, &end);
   elapsed_t_millisec = (end.tv_sec * 1000.0 - begin.tv_sec * 1000.0) +
         ((end.tv_nsec - begin.tv_nsec) / 1000000.0);
 
   printf("%s GPU duty cycle end %.5f %s \n", C_GREN, elapsed_t_millisec ,C_NRML);
-  float eta = interval - elapsed_t_millisec;
-  if(eta > 0){
-    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(eta)));
-  }
 }
 
 float Workload::CalculateOffsetandDutyCycle(int resource){
@@ -393,23 +358,28 @@ int Workload::ReadParams(std::string& param_file_name){
       return 0;
   }
 
-  double interval;
-  int gpu_cycle, cpu_cycle;
+  if (!inFile.is_open()) {
+      std::cerr << "파일을 열 수 없습니다: " << param_file_name << std::endl;
+      return 1;
+  }
 
-  // 파일에서 데이터를 읽어 구조체에 저장
-  while (inFile >> interval >> gpu_cycle >> cpu_cycle) {
-    TestParam param{interval, gpu_cycle, cpu_cycle}; // 구조체 초기화
-    test_params.push_back(param); // 벡터에 구조체 추가
+  std::string line;
+  while (std::getline(inFile, line)) {
+      std::stringstream ss(line);
+
+      float time;
+      int value1, value2, value3, value4, lastValue;
+
+      // 데이터 읽기
+      ss >> time >> value1 >> value2 >> value3 >> value4 >> lastValue;
+
+      // 벡터에 저장
+      timeVec.push_back(time);
+      CPUload.push_back(value1 + value2 + value3 + value4);
+      GPUload.push_back(lastValue);
   }
 
   inFile.close();
-
-  // 데이터 확인 출력
-  // for (const auto& param : test_params) {
-  //   std::cout << "Interval: " << param.interval
-  //             << ", GPU Cycle: " << param.gpu_cycle
-  //             << ", CPU Cycle: " << param.cpu_cycle << std::endl;
-  // }
 
   return 1;
 }

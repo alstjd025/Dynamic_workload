@@ -1,16 +1,14 @@
 #include "dynamic_workload.h"
 
 int main(int argv, char* argc[]){
-  if(argv < 4){
-    std::cout << "Not enough args, usage : duration(sec), initial wait time(sec)" <<
-                 " offset file path, parameter file path" << "\n";
+  if(argv < 2){
+    std::cout << "Not enough args, usage : parameter file path" << "\n";
     exit(-1);
   }
-  int duration = atoi(argc[1]);
-  int wait_time = atoi(argc[2]);
-
+  std::cout << argc[1] << "\n";
+  std::string filename = argc[1];
   // Workload workload(duration, cpu, gpu, false);
-  Workload workload(duration, wait_time, std::string(argc[3]), std::string(argc[4]));
-
+  Workload workload(filename);
+  std::cout << "hello" << "\n";
   return 0;
 }

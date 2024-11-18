@@ -37,10 +37,7 @@ class Workload {
  public:
   Workload();
   // Workload(int duration, int cpu, int gpu, bool random);
-  Workload(int single_test_duration,
-           int init_wait_time,
-           std::string offset_file_name,
-           std::string param_file_name);
+  Workload(std::string offset_file_name);
 
   ~Workload();
 
@@ -111,5 +108,10 @@ class Workload {
 
   // CPU workload pool
   std::vector<std::thread> cpu_workload_pool;
+
+
+  std::vector<float> timeVec;
+  std::vector<int> CPUload;
+  std::vector<int> GPUload;
 
 };  // class Workload
