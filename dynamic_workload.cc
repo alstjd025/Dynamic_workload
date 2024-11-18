@@ -1,11 +1,13 @@
 #include "dynamic_workload.h"
 #define GPU_UTIL_FILE "/mnt/ramdisk/gpu_util"
 
-#define GPU_KERNEL_SIZE 15
+
+#define GPU_KERNEL_SIZE 1024
+#define GPU_WORKER_NUM 8
 
 const char* computeShaderSource = R"(
 #version 310 es
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in; // Work group size
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 49) in; // 워크 그룹 크기를 작게 설정하여 오버헤드 증가
 
 layout(std430, binding = 0) readonly buffer MatrixA {
     float A[];
@@ -19,11 +21,11 @@ layout(std430, binding = 2) writeonly buffer MatrixC {
     float C[];
 };
 
-uniform ivec3 sizeA; // (x1, y1, z1)
-uniform ivec3 sizeB; // (x2, y2, z2)
+uniform ivec3 sizeA; // Matrix A 크기 (x1, y1, z1)
+uniform ivec3 sizeB; // Matrix B 크기 (x2, y2, z2)
 
 void main() {
-    ivec3 gid = ivec3(gl_GlobalInvocationID); // Global ID for each thread
+    ivec3 gid = ivec3(gl_GlobalInvocationID); // Global ID for 각 스레드
 
     int x1 = sizeA.x;
     int y1 = sizeA.y;
@@ -33,18 +35,55 @@ void main() {
     int y2 = sizeB.y;
     int z2 = sizeB.z;
 
-    // Ensure valid multiplication indices
+    // 유효한 index 범위를 벗어난 스레드는 return
     if (gid.x >= x1 || gid.y >= y2 || gid.z >= z2) {
         return;
     }
 
     float sum = 0.0;
-    for (int i = 0; i < y1; ++i) { // y1 == x2 for matrix multiplication compatibility
-        int indexA = gid.x * (y1 * z1) + i * z1 + gid.z;
-        int indexB = i * (y2 * z2) + gid.y * z2 + gid.z;
-        sum += A[indexA] * B[indexB];
-    }
 
+    // 중첩 루프 및 비선형 연산 추가
+    for (int repeat = 0; repeat < 5000000; ++repeat) {  // 반복 횟수 증가
+        for (int j = 0; j < 20; ++j) {  // 더 많은 반복 추가
+            for (int i = 0; i < y1; ++i) {
+                int indexA = gid.x * (y1 * z1) + i * z1 + gid.z;
+                int indexB = i * (y2 * z2) + gid.y * z2 + gid.z;
+
+                // 메모리 접근 증가
+                float tempA = A[indexA];
+                float tempB = B[indexB];
+                float temp = tempA * tempB;
+
+                // 복잡한 비선형 연산 추가
+                temp = sin(temp) * cos(temp * 0.5) - log(abs(temp) + 1.0);
+                temp = tanh(temp) * exp(temp) + sqrt(abs(temp) + 0.01);
+
+                // 조건 기반 추가 연산
+                if (temp > 0.3) {
+                    temp += pow(temp, 2.5) + sin(temp);
+                } else {
+                    temp -= sqrt(abs(temp)) * log(abs(temp) + 1.0);
+                }
+
+                // 의미 없는 유휴 연산
+                float dummy = temp;
+                for (int k = 0; k < 10; ++k) {  // 반복 횟수 증가
+                    dummy = dummy * 0.99999 + sin(dummy) * cos(dummy * 0.1);
+                    dummy += log(abs(dummy) + 1.0) * exp(-dummy);
+                }
+
+                // 동기화로 병목 추가
+                barrier();
+
+                // 중간 결과 누적
+                sum += temp + dummy;
+
+                // 임시 메모리 저장
+                C[(gid.x + gid.y + gid.z + i) % (x1 * y2 * z2)] = dummy;
+            }
+        }
+    }
+    // 최종 결과 저장
     int indexC = gid.x * (y2 * z2) + gid.y * z2 + gid.z;
     C[indexC] = sum;
 }
@@ -84,6 +123,12 @@ Workload::Workload(int single_test_duration_,
   gpu_kernel_size = GPU_KERNEL_SIZE;
   cpu_cores = get_nprocs();
 
+
+int maxWorkGroupSize;
+glGetIntegerv(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, &maxWorkGroupSize);
+printf("....................Max Work Group Size: %d\n", maxWorkGroupSize);
+
+
   std::cout << "Dynamic dummy workload" << "\n";
   std::cout << "Single test duration: " << single_test_duration << "\n";
   std::cout << "Inital wait time: " << init_wait_time << "s \n";
@@ -104,6 +149,8 @@ Workload::Workload(int single_test_duration_,
   double interval_elapsed_t = 0;
   double single_interval = 0;
   int maximum_test = 0;
+
+  // EZE 
   cpu_workload_pool.reserve(cpu_cores);
   stop = false;
   cpu_worker_termination = false;
@@ -113,11 +160,18 @@ Workload::Workload(int single_test_duration_,
               << "\n";
     cpu_workload_pool.emplace_back([this]() { this->CPU_Worker(); });
   }
-  //Minsung
-  gpu_workload_pool.reserve(1);
+
+
+  //EZE
+  int GPU_cores  = GPU_WORKER_NUM;
+  gpu_workload_pool.reserve(GPU_cores);
+  for (int i = 0; i < GPU_cores; ++i) {
+    std::cout << "Creates " << i << " gpu worker"
+              << "\n";
+    gpu_workload_pool.emplace_back([this]() { this->GPU_Worker(); });
+  }
   std::cout << "Creates kernel size " << gpu_kernel_size << " GPU worker"
             << "\n";
-  gpu_workload_pool.emplace_back([this]() { this->GPU_Worker(); });
   
   double elapsed_t_millisec = 0;
   // Wait for inital waiting time.
@@ -136,11 +190,11 @@ Workload::Workload(int single_test_duration_,
                 <<  "/"<< maximum_test << " begin ====\n" <<C_NRML;
       // CPU and GPU worklaod should work in single interval.
       // start CPU worker
-      cpu_workload = std::thread(&Workload::CPUWorkload, this);  
+      cpu_workload = std::thread(&Workload::CPUWorkload, this);  // EZE
       // start GPU worker
       gpu_workload = std::thread(&Workload::GPUWorkload, this);  
       
-      cpu_workload.join();
+      cpu_workload.join();  // EZE
       gpu_workload.join();
       clock_gettime(CLOCK_MONOTONIC, &end);
       elapsed_t_millisec = (end.tv_sec * 1000.0 - init.tv_sec * 1000.0) +
@@ -265,12 +319,12 @@ void Workload::GPUWorkload(){
     std::unique_lock<std::mutex> lock_data(gpu_mtx);
     gpu_end_cv.wait(lock_data, [&] { return gpu_kernel_done; });
   }
-  printf("%s GPU duty cycle end %s \n", C_GREN, C_NRML);
   gpu_stop = true;
   clock_gettime(CLOCK_MONOTONIC, &end);
   elapsed_t_millisec = (end.tv_sec * 1000.0 - begin.tv_sec * 1000.0) +
         ((end.tv_nsec - begin.tv_nsec) / 1000000.0);
 
+  printf("%s GPU duty cycle end %.5f %s \n", C_GREN, elapsed_t_millisec ,C_NRML);
   float eta = interval - elapsed_t_millisec;
   if(eta > 0){
     std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(eta)));
@@ -440,55 +494,56 @@ void Workload::GPU_Worker() {
 
   // Initialize data
   // computation
-  int x1 = 1024, y1 = 128, z1 = 256; // Matrix A size (4x4x4)
-  int x2 = 32, y2 = 32, z2 = gpu_kernel_size; // Matrix B size (4x4x4)
-  
-  // nano                nx
-  // z2 512
-  // z2 412              202ms 
-  // z2 256              128ms
-  // z2 128 459ms        
-  // z2 55 201ms
-  // z2 29 105
-  // z2 27 99ms
-  // z2 15 50ms
-  // z2 3 11mss
-  // z2 6 20 ms
-  // Initialize matrices A and B with some data
-  std::vector<float> A(x1 * y1 * z1, 1.0f); // Fill with 1.0f for simplicity
-  std::vector<float> B(x2 * y2 * z2, 2.0f); // Fill with 2.0f for simplicity
-  std::vector<float> C(x1 * y2 * z2, 0.0f); // Result matrix initialized to 0.0f
+  // int x1 = 1024, y1 = 128, z1 = 256; // Matrix A size (4x4x4)
+  // int x2 = 32, y2 = 32, z2 = gpu_kernel_size; // Matrix B size (4x4x4) 
 
-  // Create buffer objects
-  GLuint bufferA, bufferB, bufferC;
-  glGenBuffers(1, &bufferA);
-  glGenBuffers(1, &bufferB);
-  glGenBuffers(1, &bufferC);
+// int x1 = 32, y1 = 128, z1 = 64;    
+// int x2 = 32, y2 = 128, z2 = 8192;
 
+int x1 = 32, y1 = 128, z1 = 1024;    
+int x2 = 32, y2 = 128, z2 = 8192;
 
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferA);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferB);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferC);
+// 워크 그룹 크기 (최대 워크 그룹 크기로 확장)  
+int workGroupSizeX = 7; 
+int workGroupSizeY = 7; 
+int workGroupSizeZ = 1; 
 
+// 각 차원에 대한 디스패치 크기 계산 (올림 처리)  
+GLuint dispatch_x = (GLuint)((x1 + workGroupSizeX - 1) / workGroupSizeX); 
+GLuint dispatch_y = (GLuint)((y2 + workGroupSizeY - 1) / workGroupSizeY); 
+GLuint dispatch_z = (GLuint)((z2 + workGroupSizeZ - 1) / workGroupSizeZ); 
 
-  glBufferData(GL_SHADER_STORAGE_BUFFER, A.size() * sizeof(float),
-               A.data(), GL_STATIC_DRAW);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, B.size() * sizeof(float),
-               B.data(), GL_STATIC_DRAW);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, C.size() * sizeof(float),
-               C.data(), GL_STATIC_DRAW);
-              
-  
+// Initialize matrices A and B with some data 
+std::vector<float> A(x1 * y1 * z1, 1.0f); // Fill with 1.0f for simplicity
+std::vector<float> B(x2 * y2 * z2, 2.0f); // Fill with 2.0f for simplicity
+std::vector<float> C(x1 * y2 * z2, 0.0f); // Result matrix initialized to 0.0f
 
-  // Bind buffer objects to binding points
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, bufferA);
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferB);
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, bufferC);
-  
-  glUniform3i(glGetUniformLocation(program, "sizeA"), x1, y1, z1);
-  glUniform3i(glGetUniformLocation(program, "sizeB"), x2, y2, z2);
+// Create buffer objects  
+GLuint bufferA, bufferB, bufferC; 
+glGenBuffers(1, &bufferA);  
+glGenBuffers(1, &bufferB);  
+glGenBuffers(1, &bufferC);  
 
-  glUseProgram(program);
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferA);  
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferB);  
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferC);  
+
+glBufferData(GL_SHADER_STORAGE_BUFFER, A.size() * sizeof(float), A.data(), GL_STATIC_DRAW);
+glBufferData(GL_SHADER_STORAGE_BUFFER, B.size() * sizeof(float), B.data(), GL_STATIC_DRAW);
+glBufferData(GL_SHADER_STORAGE_BUFFER, C.size() * sizeof(float), C.data(), GL_STATIC_DRAW);
+
+// Bind buffer objects to binding points  
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, bufferA); 
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferB); 
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, bufferC); 
+
+// Set uniforms 
+glUniform3i(glGetUniformLocation(program, "sizeA"), x1, y1, z1);  
+glUniform3i(glGetUniformLocation(program, "sizeB"), x2, y2, z2);  
+
+glUseProgram(program);
+std::cout << "Created new GPU worker \n";
+
   std::cout << "Created new GPU worker \n";
   while(!gpu_worker_termination){
     {
@@ -503,22 +558,18 @@ void Workload::GPU_Worker() {
     // Todo :
     count = 0;
     float gpu_elapsed_t = 0;
+    // int EZ=0;
     struct timespec seq_begin;
     clock_gettime(CLOCK_MONOTONIC, &seq_begin);
-    // std::cout << "gpu go" << "\n";
     while (!gpu_stop) {
       if (m_break) break;
-      // int PERIOD = 5;
-      // glDispatchCompute(16, 16, 1);
-
-      // std::this_thread::sleep_for(std::chrono::milliseconds(PERIOD));
-      
       clock_gettime(CLOCK_MONOTONIC, &begin);
-      glDispatchCompute((GLuint)x1, (GLuint)y2, (GLuint)z2);
-      glFlush();  // Ensures that the dispatch command is processed, delete
-      // // Create a fence sync object and wait for the GPU to finish
-      GLsync syncObj = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0); //delete
-      glWaitSync(syncObj, 0, GL_TIMEOUT_IGNORED); // delete 
+      glDispatchCompute(dispatch_x, dispatch_y, dispatch_z); // GPU에서 계산 시작
+      glFlush();  // 명령어를 즉시 실행시키기 위해 호출 (디스패치가 비동기적으로 처리될 수 있음)
+      // EZ+=1;
+      // EZE : Turn off sync function to reduce cpu utilization
+      // GLsync syncObj = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0); 
+      // glWaitSync(syncObj, 0, GL_TIMEOUT_IGNORED);
       clock_gettime(CLOCK_MONOTONIC, &end);
 
       response_t = (end.tv_sec - begin.tv_sec) +
@@ -535,11 +586,15 @@ void Workload::GPU_Worker() {
       clock_gettime(CLOCK_MONOTONIC, &end);
       gpu_elapsed_t = (end.tv_sec - seq_begin.tv_sec) +
                   ((end.tv_nsec - seq_begin.tv_nsec) / 1000000000.0);
-      if (gpu_elapsed_t > gpu_workload_duty_cycle) {
+      if (gpu_elapsed_t > gpu_workload_duty_cycle*1.8) {  // EZ : to align with duty_cycle (2500ms)
         gpu_stop = true;
       }
+      // if (gpu_elapsed_t > gpu_workload_duty_cycle) {
+      //   gpu_stop = true;
+      // }
     }
     // wake main thread
+    // std::cout << "EZE : glDispatchCompute count : " << EZ << std::endl;
     {
       std::unique_lock<std::mutex> lock_data(gpu_mtx);
       gpu_kernel_done = true;
