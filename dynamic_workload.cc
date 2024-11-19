@@ -117,7 +117,7 @@ Workload::Workload(std::string param_file_name_) {
   
   double elapsed_t_millisec = 0;
   // Wait for inital waiting time.
-  // std::this_thread::sleep_for(std::chrono::seconds(init_wait_time));
+  std::this_thread::sleep_for(std::chrono::seconds(15));
   std::cout << C_GREN << "========Workload start=========\n" << C_NRML;
   maximum_test = timeVec.size() / 30;
   int cur_time = timeVec[0];
@@ -128,6 +128,7 @@ Workload::Workload(std::string param_file_name_) {
   while(do_load){
     while(cur_time < next_time){
       cur_time = timeVec[global_inner_test_sequence];
+      std::cout << "add util "<< GPUload[global_inner_test_sequence] << "\n";
       gpu_duty += GPUload[global_inner_test_sequence];
       global_inner_test_sequence += 1;
       window_count++;
@@ -360,6 +361,7 @@ int Workload::ReadParams(std::string& param_file_name){
       timeVec.push_back(time);
       CPUload.push_back(value1 + value2 + value3 + value4);
       GPUload.push_back(lastValue);
+      std::cout << "GPU val " << lastValue << "\n"; 
   }
 
   inFile.close();
